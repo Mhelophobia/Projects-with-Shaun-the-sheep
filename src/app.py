@@ -22,6 +22,7 @@ from datetime import datetime
 import core
 import ai_chat
 import v7_assistant
+import variable_types
 
 SAMPLE = Path(__file__).resolve().parent.parent / "data" / "input" / \
     "sample_survey.csv"
@@ -181,7 +182,7 @@ def _remember_upload(source, name):
     st.session_state["recent_uploads"] = recents[:5]
 
 
-def _clear_analysis():
+def _clear_analysis(reset_variables=True):
     """Reset dataset-specific state before displaying a changed upload."""
     for key in ("result", "regression"):
         previous = st.session_state.get(key)
@@ -193,6 +194,9 @@ def _clear_analysis():
                 "reg_y", "reg_x", "v7_y", "v7_x", "dataset_sheet",
                 "results_tabs"):
         st.session_state.pop(key, None)
+    for key in list(st.session_state):
+        if reset_variables and key.startswith("variable_"):
+            st.session_state.pop(key, None)
     for section in ("cleaning", "statistics", "charts", "regression"):
         st.session_state.pop(f"explanation_{section}", None)
         st.session_state.pop(f"chat_{section}", None)
@@ -221,6 +225,69 @@ def _applied_cleaning_options(result):
         "convert_numerics": "Skipped numeric auto-conversion (option off)." not in lines,
         "fix_missing_tokens": "Skipped missing-marker standardization (option off)." not in lines,
     }
+
+
+def _variable_review(result, name):
+    base = st.session_state.setdefault("variable_base", result)
+    source = base["df"]
+    with st.expander("Review variable types & dummy encoding", expanded=True,
+                     icon=":material/checklist:"):
+        st.caption("Numeric text conversion changes storage, not meaning. Review suggestions "
+                   "below: numbers can be quantities or category codes. Applying this step "
+                   "updates all results and clears previous models and AI responses.")
+        binary = [c for c in source if variable_types.suggest(source[c], c) ==
+                  "Binary / existing dummy"]
+        if binary:
+            st.info("Existing 0/1 binary variables detected: " + ", ".join(binary) +
+                    ". No additional encoding is needed for these columns.")
+        st.caption("Categories produce one dummy per non-reference category. Original category "
+                   "labels are retained for exploration; identifiers are excluded from regression.")
+        roles, references = {}, {}
+        for index, col in enumerate(source.columns):
+            left, right = st.columns(2)
+            suggested = variable_types.suggest(source[col], col)
+            roles[col] = left.selectbox(
+                f"{col} — variable type", variable_types.ROLES,
+                index=variable_types.ROLES.index(suggested), key=f"variable_role_{index}",
+                help="Suggestions use values and names, not a codebook. Override them when needed.")
+            if roles[col] == "Categorical":
+                cats = variable_types.levels(source[col])
+                if 2 <= len(cats) <= 50:
+                    references[col] = right.selectbox(
+                        f"{col} — reference category", cats, key=f"variable_ref_{index}")
+                    right.caption(f"Will create {len(cats) - 1} dummy column(s).")
+                else:
+                    right.warning("Encoding requires 2–50 categories. Review/group values or choose Identifier.")
+            elif roles[col] == "Needs review":
+                right.warning("These values may be category codes or quantities (possibly with invalid text). Choose their meaning.")
+            else:
+                right.caption("Examples: " + ", ".join(variable_types.levels(source[col])[:5]))
+        if st.button("Apply variable types", key="variable_apply", type="primary"):
+            try:
+                prepared, log = variable_types.prepare(source, roles, references)
+                with st.spinner("Updating analysis with your variable types…"):
+                    updated = core.summarize_frame(
+                        prepared, name, base["clean_lines"] + log,
+                        base["raw_shape"], _applied_cleaning_options(base))
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                # Preserve the original cleaned source so repeated reviews never double-encode.
+                _clear_analysis(reset_variables=False)
+                st.session_state["result"] = updated
+                st.session_state["name"] = name
+                st.session_state["variable_applied"] = log
+                st.session_state["variable_choices"] = (roles, references)
+                st.rerun()
+        if st.session_state.get("variable_applied"):
+            if st.session_state.get("variable_choices") != (roles, references):
+                st.warning("You have unapplied changes. Results still use your last applied variable types.")
+            else:
+                st.success("Variable types applied. Results below use your last applied review.")
+            for line in st.session_state["variable_applied"]:
+                st.caption(line)
+        else:
+            st.caption("Suggestions have not been applied. Results currently use the cleaning settings only.")
 
 
 def _regression_equation(reg):
@@ -268,7 +335,8 @@ def main():
                 help="Drop rows that are exact copies of another row.")
             opt_numeric = st.checkbox(
                 "Convert numeric text", value=True, key="clean_numeric",
-                help="Convert text columns only when all non-missing values look numeric.")
+                help="Convert numeric-looking text into numbers, including existing 0/1 dummies. "
+                     "This does not encode categories. Use Review variable types to mark numeric category codes.")
             opt_missing = st.checkbox(
                 "Standardize missing values", value=True, key="clean_missing",
                 help="Treat NA, N/A, -, ? and similar markers as missing values.")
@@ -340,8 +408,9 @@ def main():
                 st.caption(description)
         return
 
-    df = result["df"]
     name = st.session_state.get("name", "dataset")
+    _variable_review(result, name)
+    df = result["df"]
     st.subheader("Dataset overview", anchor=False)
     st.caption(f"Analyzed file: {name}")
     c1, c2, c3, c4 = st.columns(4)
@@ -383,20 +452,6 @@ def main():
                 icon=":material/warning:")
         st.caption("Preview of the first 50 rows. Download the full dataset from Downloads.")
         st.dataframe(df.head(50), width="stretch", hide_index=True)
-        if uploaded is not None and result["cat_cols"]:
-            st.subheader("🔢 Dummy variables")
-            st.write("One-hot encode categorical columns into 0/1. The "
-                 "reference category is dropped automatically to avoid "
-                 "the dummy-variable trap.")
-            enc_pick = st.multiselect("Columns to encode",
-                          result["cat_cols"], key="enc_pick")
-            if st.button("Apply dummy encoding", key="enc_apply",
-                  disabled=not enc_pick):
-                 analyze_and_store(uploaded, uploaded.name, sheet,
-                         {"drop_dupes": opt_dupes,
-                          "convert_numerics": opt_numeric,
-                          "fix_missing_tokens": opt_missing},
-                         encode_cols=enc_pick)
         with st.expander("Cleaning log", icon=":material/checklist:"):
             for line in result["clean_lines"]:
                 st.write("• " + line)

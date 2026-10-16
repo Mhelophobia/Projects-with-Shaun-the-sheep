@@ -397,13 +397,18 @@ def analyze(source, name=None, sheet=None, clean_opts=None,
     if encode_cols:
         df, enc_lines = encode_dummies(df, encode_cols)
         clean_lines = clean_lines + enc_lines
+    return summarize_frame(df, name or "dataset", clean_lines, raw.shape, opts)
+
+
+def summarize_frame(df, name, clean_lines, raw_shape, opts):
+    """Rebuild all outputs from the same reviewed dataset."""
     desc, missing, top_cats, numeric_cols, cat_cols = summarize(df)
     figs = make_figures(df, numeric_cols, cat_cols)
     report = build_report(name or "dataset", df, clean_lines, desc,
                           missing, numeric_cols, cat_cols,
                           [t for t, _ in figs])
     return {
-        "raw_shape": raw.shape,
+        "raw_shape": raw_shape,
         "clean_opts": opts.copy(),
         "df": df,
         "clean_lines": clean_lines,

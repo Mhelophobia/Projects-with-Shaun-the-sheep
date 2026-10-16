@@ -274,7 +274,7 @@ def main():
                       "convert_numerics": opt_numeric,
                       "fix_missing_tokens": opt_missing}
 
-        st.caption("AI ready" if _current_api_key()
+        st.caption("Your personal AI assistant is ready to help." if _current_api_key()
                    else "AI is not configured. Contact the app owner to enable it.")
 
         recents = st.session_state.get("recent_uploads", [])
@@ -287,7 +287,7 @@ def main():
                         bio = io.BytesIO(r["data"])
                         bio.name = r["name"]
                         _start_analysis(bio, r["name"], clean_opts=clean_opts)
-        st.caption("Built by Mhel & Shaun · V7")
+        st.caption("Project by Mhel Garret L. Suerte")
 
     result = st.session_state.get("result")
     st.caption("WORKSPACE / RESEARCH")

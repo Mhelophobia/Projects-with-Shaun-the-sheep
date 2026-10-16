@@ -198,10 +198,12 @@ def _clear_analysis():
         st.session_state.pop(f"chat_{section}", None)
 
 
-def analyze_and_store(source, name, sheet=None, clean_opts=None):
+def analyze_and_store(source, name, sheet=None, clean_opts=None,
+                      encode_cols=None):
     with st.spinner("Cleaning your data and crunching the numbers…"):
         result = core.analyze(source, name=name, sheet=sheet,
-                              clean_opts=clean_opts)
+                              clean_opts=clean_opts,
+                              encode_cols=encode_cols)
     _remember_upload(source, name)
     _clear_analysis()
     st.session_state["result"] = result
@@ -381,6 +383,20 @@ def main():
                 icon=":material/warning:")
         st.caption("Preview of the first 50 rows. Download the full dataset from Downloads.")
         st.dataframe(df.head(50), width="stretch", hide_index=True)
+        if uploaded is not None and result["cat_cols"]:
+            st.subheader("🔢 Dummy variables")
+            st.write("One-hot encode categorical columns into 0/1. The "
+                 "reference category is dropped automatically to avoid "
+                 "the dummy-variable trap.")
+            enc_pick = st.multiselect("Columns to encode",
+                          result["cat_cols"], key="enc_pick")
+            if st.button("Apply dummy encoding", key="enc_apply",
+                  disabled=not enc_pick):
+                 analyze_and_store(uploaded, uploaded.name, sheet,
+                         {"drop_dupes": opt_dupes,
+                          "convert_numerics": opt_numeric,
+                          "fix_missing_tokens": opt_missing},
+                         encode_cols=enc_pick)
         with st.expander("Cleaning log", icon=":material/checklist:"):
             for line in result["clean_lines"]:
                 st.write("• " + line)

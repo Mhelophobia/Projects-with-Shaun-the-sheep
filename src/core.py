@@ -210,6 +210,29 @@ def clean(df, drop_dupes=False, convert_numerics=True,
     lines.append(f"Final shape: {df.shape[0]} rows × {df.shape[1]} columns")
     return df, lines
 
+def encode_dummies(df, columns):
+    """One-hot encode categorical columns. Returns (df, log_lines).
+
+    Uses drop_first=True so the reference category is omitted —
+    this avoids the dummy-variable trap (perfect multicollinearity).
+    New columns are named <col>_<value> and coded 0/1 (int).
+    """
+    df = df.copy()
+    lines = []
+    columns = [c for c in columns if c in df.columns]
+    if not columns:
+        lines.append("No columns selected for dummy encoding.")
+        return df, lines
+    before = df.shape[1]
+    df = pd.get_dummies(df, columns=columns, drop_first=True, dtype=int)
+    added = df.shape[1] - before
+    lines.append(
+        f"One-hot encoded {len(columns)} column(s) "
+        f"({', '.join(columns)}) → {added} dummy column(s), "
+        "reference category dropped to avoid the dummy trap.")
+    return df, lines
+
+
 
 def summarize(df):
     """Returns (desc, missing, top_cats, numeric_cols, cat_cols)."""
@@ -355,12 +378,15 @@ def build_report(name, df, clean_lines, desc, missing,
     return "\n".join(lines)
 
 
-def analyze(source, name=None, sheet=None, clean_opts=None):
+def analyze(source, name=None, sheet=None, clean_opts=None,
+            encode_cols=None):
     """Full V1 pipeline. Returns dict with everything the UIs need.
 
     clean_opts: dict with any of drop_dupes, convert_numerics,
     fix_missing_tokens. Numeric conversion defaults to True; duplicate removal
     and missing-token standardization are opt-in. The UI supplies explicit options.
+    encode_cols: categorical columns to one-hot encode into 0/1 dummies
+    (reference category dropped to avoid the dummy trap).
     """
     raw = load_table(source, filename=name, sheet=sheet)
     opts = {"drop_dupes": False, "convert_numerics": True,
@@ -368,6 +394,9 @@ def analyze(source, name=None, sheet=None, clean_opts=None):
     if clean_opts:
         opts.update(clean_opts)
     df, clean_lines = clean(raw, **opts)
+    if encode_cols:
+        df, enc_lines = encode_dummies(df, encode_cols)
+        clean_lines = clean_lines + enc_lines
     desc, missing, top_cats, numeric_cols, cat_cols = summarize(df)
     figs = make_figures(df, numeric_cols, cat_cols)
     report = build_report(name or "dataset", df, clean_lines, desc,

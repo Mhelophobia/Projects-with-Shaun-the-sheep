@@ -287,12 +287,12 @@ def main():
                         bio = io.BytesIO(r["data"])
                         bio.name = r["name"]
                         _start_analysis(bio, r["name"], clean_opts=clean_opts)
-        st.caption("Project by Mhel Garret L. Suerte")
+        st.caption("Powered by Groq")
 
     result = st.session_state.get("result")
     st.caption("WORKSPACE / RESEARCH")
-    st.title("From data to discovery")
-    st.write("Clean, explore, and turn your data into a research report.")
+    st.title("Meet your data before you marry your model.")
+    st.write("Upload your dataset and see in one click whether it's clean, sound, and regression-ready — before you invest weeks in analysis.")
 
     upload_area = (st.expander("Analyze another dataset", icon=":material/upload_file:")
                    if result is not None else st.container(border=True))

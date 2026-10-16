@@ -232,6 +232,8 @@ def encode_dummies(df, columns):
         "reference category dropped to avoid the dummy trap.")
     return df, lines
 
+
+
 def summarize(df):
     """Returns (desc, missing, top_cats, numeric_cols, cat_cols)."""
     numeric = df.select_dtypes(include=np.number)

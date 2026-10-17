@@ -92,6 +92,14 @@ dialog { box-sizing: border-box; width: min(1120px, calc(100vw - 32px));
   background: var(--st-background-color, white); color: var(--st-text-color, #162640);
   box-shadow: 0 16px 60px #14264033; font-family: inherit; }
 dialog::backdrop { background: #14264055; }
+@media (prefers-reduced-motion: no-preference) {
+  button { transition: color 140ms ease, border-color 140ms ease; }
+  dialog[open] { animation: table-arrive 160ms ease-out; }
+  @keyframes table-arrive {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
 header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
 h2 { font-size: 1.4rem; margin: 0; }
 .close { font-size: 28px; line-height: 1; background: transparent; border: 0; border-radius: 8px; width: 40px; height: 40px; }

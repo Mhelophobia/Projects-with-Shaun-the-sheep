@@ -74,6 +74,8 @@ class FeedbackTests(unittest.TestCase):
                 self.app.get("file_uploader")[0].upload("data.csv", data).run()
                 self.app.button(key="analyze_dataset").click().run()
                 self.assertFalse(self.app.exception)
+                self.app.session_state["results_tabs"] = ":material/query_stats: **Regression**"
+                self.app.run()
                 self.app.multiselect(key="reg_x").set_value(["y"]).run()
                 self.app.button(key="reg_run").click().run()
                 self.assertFalse(self.app.exception)
@@ -188,16 +190,19 @@ class FeedbackTests(unittest.TestCase):
         self.server_secrets["GROQ_API_KEY"] = "test-key"
         self.app.button(key="try_sample").click().run()
         self.app.button(key="open_assistant").click().run()
+        first_greeting = self.app.session_state["assistant_greeting_index"]
         self.app.session_state["chat_histories"] = {
             "cleaning": [{"role": "assistant", "content": "Overview reply"}],
             "statistics": [{"role": "assistant", "content": "Statistics reply"}],
         }
         self.app.run()
+        self.assertEqual(self.app.session_state["assistant_greeting_index"], first_greeting)
         self.app.button(key="close_assistant").click().run()
         self.assertFalse(self.app.exception)
         self.assertFalse(self.app.chat_input)
         self.app.button(key="open_assistant").click().run()
         self.assertTrue(self.app.session_state["assistant_open"])
+        self.assertNotEqual(self.app.session_state["assistant_greeting_index"], first_greeting)
         self.assertTrue(any(m.value == "Overview reply" for m in self.app.markdown))
         self.app.button(key="new_chat_cleaning").click().run()
         self.assertFalse(self.app.exception)
@@ -215,6 +220,8 @@ class FeedbackTests(unittest.TestCase):
         self.app.button(key="open_assistant").click().run()
         self.assertTrue(self.app.session_state["assistant_open"])
         self.assertEqual(len(self.app.chat_input), 1)
+        # AppTest exposes only the targeted fragment after a keyed rerun.
+        self.app.run()
         self.app.button(key="analyze_dataset").click().run()
         self.assertFalse(self.app.exception)
         self.assertFalse(self.app.session_state["assistant_open"])

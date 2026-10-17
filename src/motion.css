@@ -1,0 +1,26 @@
+/* Short, purposeful transitions; no delays on actions or computations. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-testid="stMain"] button {
+    transition: background-color 140ms ease, border-color 140ms ease,
+                box-shadow 140ms ease, transform 140ms ease;
+  }
+  [data-testid="stMain"] button:active:not(:disabled) { transform: translateY(1px); }
+  [data-testid="stMain"] button:focus-visible {
+    box-shadow: 0 0 0 3px #2458d326;
+  }
+  [data-testid="stExpander"] details > summary { transition: background-color 160ms ease; }
+  [data-testid="stMain"] .block-container { transition: padding-right 220ms ease; }
+  .st-key-research_chat_panel { animation: assistant-arrive 220ms cubic-bezier(.2,.8,.2,1); }
+  .st-key-assistant_welcome { animation: welcome-arrive 180ms ease-out; }
+  [class*="st-key-assistant_messages_"] [data-testid="stChatMessage"] {
+    animation: welcome-arrive 160ms ease-out;
+  }
+  @keyframes assistant-arrive {
+    from { opacity: 0; transform: translateX(28px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes welcome-arrive {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}

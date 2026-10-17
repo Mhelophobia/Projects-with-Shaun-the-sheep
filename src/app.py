@@ -134,8 +134,25 @@ def _send_chat_message(prompt, section, result, name, reg=None):
     hist.append({"role": "assistant", "content": reply})
 
 
+ASSISTANT_GREETINGS = (
+    "Hey, curious mind!",
+    "Ready for a little discovery?",
+    "You've got this, researcher!",
+    "Let's find your next aha!",
+    "Your data buddy is here!",
+    "Big questions, small steps.",
+    "Hello, bright spark!",
+    "Let's make sense of it together!",
+)
+
+
 def _set_assistant_open(opened):
+    if opened and not st.session_state.get("assistant_open", False):
+        previous = st.session_state.get("assistant_greeting_index", -1)
+        st.session_state["assistant_greeting_index"] = (previous + 1) % len(ASSISTANT_GREETINGS)
     st.session_state["assistant_open"] = opened
+    if opened:
+        st.rerun("research_assistant")
 
 
 def _new_section_chat(section):
@@ -145,6 +162,7 @@ def _new_section_chat(section):
     generations[section] = generations.get(section, 0) + 1
 
 
+@st.fragment(key="research_assistant")
 def _chat_ui(section, result, name, reg=None):
     """A docked right-hand assistant with a separate conversation for each tab."""
     if not st.session_state.setdefault("assistant_open", False):
@@ -167,31 +185,38 @@ def _chat_ui(section, result, name, reg=None):
         generation = st.session_state.get("chat_generations", {}).get(section, 0)
         conversation = st.container(key=f"assistant_messages_{section}_{generation}",
                                     height=400, border=False, autoscroll=bool(history))
+        suggested_prompt = None
         with conversation:
+            welcome = st.empty()
             for message_index, msg in enumerate(history):
                 with st.chat_message(msg["role"]):
                     render_message(msg["content"], key=f"{section}_history_{message_index}")
             if not history:
-                st.markdown("### :blue[Hi there.]\n## How can I help?")
-                st.caption(f"Let's take a closer look at your {label.lower()} results.")
-                st.space("small")
-                questions = CHAT_SUGGESTIONS.get(section, []) + ["Explain this section in simple terms."]
-                for q in questions:
-                    if st.button(q, key=f"sugg_{section}_{q[:20]}", width="stretch",
-                                 icon=":material/auto_awesome:", disabled=not api_key):
-                        _send_chat_message(q, section, result, name, reg=reg)
-                        st.rerun()
+                with welcome.container():
+                    greeting = ASSISTANT_GREETINGS[st.session_state.get("assistant_greeting_index", 0)]
+                    with st.container(key="assistant_welcome", gap="xsmall"):
+                        st.header(f":blue[{greeting}]", anchor=False)
+                        st.markdown("### How can I help?")
+                    st.caption(f"Let's take a closer look at your {label.lower()} results.")
+                    st.space("small")
+                    questions = CHAT_SUGGESTIONS.get(section, []) + ["Explain this section in simple terms."]
+                    for q in questions:
+                        if st.button(q, key=f"sugg_{section}_{q[:20]}", width="stretch",
+                                     icon=":material/auto_awesome:", disabled=not api_key):
+                            suggested_prompt = q
             if not api_key:
                 st.info("AI is not configured yet. Contact the app owner to enable chat.")
-        if prompt := st.chat_input(f"Ask about {label.lower()}…",
-                                   key=f"chat_{section}", submit_mode="disable",
-                                   disabled=not api_key):
+        prompt = st.chat_input(f"Ask about {label.lower()}…",
+                               key=f"chat_{section}", submit_mode="disable",
+                               disabled=not api_key)
+        if prompt or suggested_prompt:
+            welcome.empty()
             with conversation:
-                _send_chat_message(prompt, section, result, name, reg=reg)
-            st.rerun()
+                _send_chat_message(prompt or suggested_prompt, section, result, name, reg=reg)
         st.caption("AI can make mistakes. Check important findings against your data.")
 
 
+@st.fragment
 def _explain_section(label, section, result, name, reg=None):
     """'Explain with AI' button for a results tab. The explanation
     persists in session state until a new dataset is analyzed."""
@@ -374,9 +399,262 @@ def _start_analysis(source, name, sheet=None, clean_opts=None):
     st.rerun()
 
 
+@st.fragment
+def _results_ui(result, name):
+    df = result["df"]
+    with st.container(border=True, key="results_navigation"):
+        st.subheader("Explore your results", anchor=False)
+        st.caption("Select a tab below to switch sections. "
+                   "Scroll the tab bar sideways if more tabs are off-screen.")
+        tab_overview, tab_stats, tab_charts, tab_reg, tab_v7, tab_download = st.tabs(
+            [":material/table_chart: **Overview**",
+             ":material/functions: **Statistics**",
+             ":material/bar_chart: **Charts**",
+             ":material/query_stats: **Regression**",
+             ":material/description: **Research report**",
+             ":material/download: **Downloads**"],
+            key="results_tabs", on_change="rerun")
+
+    with tab_overview:
+        if tab_overview.open:
+            applied_opts = _applied_cleaning_options(result)
+            skipped = [label for key, label in (
+                ("drop_dupes", "duplicate removal"),
+                ("convert_numerics", "numeric text conversion"),
+                ("fix_missing_tokens", "missing-value standardization"),
+            ) if not applied_opts[key]]
+            st.subheader("Data preview" if skipped else "Cleaned data", anchor=False)
+            if skipped:
+                st.warning(
+                    "Skipped " + ", ".join(skipped) + ". "
+                    "Basic preparation still runs: column names are tidied, empty rows "
+                    "and columns are removed, and text whitespace is trimmed. "
+                    "Enable the options in Cleaning settings and analyze the dataset "
+                    "again to apply them.",
+                    title="Cleaning options were off" if len(skipped) == 3
+                          else "Some cleaning steps were skipped",
+                    icon=":material/warning:")
+            st.caption("Preview of the first 50 rows. Download the full dataset from Downloads.")
+            st.dataframe(df.head(50), width="stretch", hide_index=True)
+            with st.expander("Cleaning log", icon=":material/checklist:"):
+                for line in result["clean_lines"]:
+                    st.write("• " + line)
+            _explain_section("Explain cleaning", "cleaning", result, name)
+
+    with tab_stats:
+        if tab_stats.open:
+            st.subheader("Missing values")
+            st.dataframe(result["missing"], width="stretch")
+            st.subheader("Numeric summary")
+            if not result["desc"].empty:
+                st.dataframe(result["desc"].round(3), width="stretch")
+            else:
+                st.write("No numeric columns in this dataset.")
+            if not result["top_cats"].empty:
+                st.subheader("Top categories")
+                st.dataframe(result["top_cats"], width="stretch")
+            _explain_section("✨ Interpret the statistics with AI", "statistics",
+                             result, name)
+
+    with tab_charts:
+        if tab_charts.open:
+            if result["figs"]:
+                for title, fig in result["figs"]:
+                    st.subheader(title)
+                    st.pyplot(fig, width="stretch")
+            else:
+                st.write("No charts could be drawn for this dataset.")
+            _explain_section("✨ Interpret the charts with AI", "charts",
+                             result, name)
+
+    with tab_reg:
+        if tab_reg.open:
+            st.subheader("OLS regression")
+            num_cols = result["numeric_cols"]
+            if len(num_cols) < 2:
+                st.info("Regression needs at least 2 numeric columns.")
+            else:
+                c1, c2 = st.columns(2)
+                y_col = c1.selectbox("Y — the variable to explain",
+                                     num_cols, key="reg_y")
+                x_cols = c2.multiselect("X's — the explanatory variables",
+                                        [c for c in num_cols if c != y_col],
+                                        key="reg_x", on_change="ignore")
+                if st.button("▶ Run regression", key="reg_run"):
+                    try:
+                        reg = core.run_regression(df, y_col, x_cols)
+                        st.session_state["regression"] = reg
+                        st.session_state.pop("explanation_regression", None)
+                        st.session_state.get("chat_histories", {}).pop(
+                            "regression", None)
+                    except (ValueError, RuntimeError) as e:
+                        st.error(str(e))
+                reg = st.session_state.get("regression")
+                if reg:
+                    st.latex(_regression_equation(reg))
+                    st.caption(f"OLS model · {reg['n_obs']:,} complete observations")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("R²", f"{reg['r2']:.3f}")
+                    m2.metric("Adj. R²", f"{reg['adj_r2']:.3f}")
+                    m3.metric("F-statistic", f"{reg['f_stat']:.1f}")
+                    m4.metric("F p-value", f"{reg['f_pvalue']:.4g}")
+                    st.subheader("Coefficients")
+                    st.dataframe(reg["coef"].round(4), width="stretch")
+                    st.subheader("VIF — multicollinearity check")
+                    vif = reg["vif"].round(3)
+                    st.dataframe(vif, width="stretch")
+                    if (vif["VIF"] > 10).any():
+                        st.warning("VIF above 10 — strong multicollinearity in "
+                                   "those variables. Consider dropping one.")
+                    elif (vif["VIF"] > 5).any():
+                        st.warning("VIF above 5 — moderate multicollinearity. "
+                                   "Worth a look.")
+                    else:
+                        st.success("All VIFs look fine (≤ 5).")
+                    st.subheader("Diagnostics")
+                    d = reg["diagnostics"]
+                    st.write(f"• Breusch-Pagan p = {d['breusch_pagan_p']:.4g} — "
+                             f"{'possible heteroskedasticity'
+                                if d['breusch_pagan_p'] < 0.05
+                                else 'no sign of heteroskedasticity'}")
+                    st.write(f"• Jarque-Bera p = {d['jarque_bera_p']:.4g} — "
+                             f"{'residuals look non-normal'
+                                if d['jarque_bera_p'] < 0.05
+                                else 'residuals look normal'}")
+                    for title, fig in reg["figs"]:
+                        st.subheader(title)
+                        st.pyplot(fig, width="stretch")
+                        plt.close(fig)
+                    _explain_section("✨ Interpret the regression with AI",
+                                     "regression", result, name, reg=reg)
+
+    with tab_v7:
+        if tab_v7.open:
+            st.subheader("One-click research assistant")
+            st.write("From your cleaned dataset to a full research report. "
+                     "The AI can suggest the research design — you confirm it, "
+                     "then one click runs everything.")
+            api_key_v7 = _current_api_key()
+            if "v7_design" not in st.session_state:
+                st.session_state["v7_design"] = None
+            if api_key_v7 and st.button("🤖 Suggest research design",
+                                       key="v7_suggest"):
+                with st.spinner("The AI is studying your columns…"):
+                    try:
+                        st.session_state["v7_design"] = \
+                            v7_assistant.suggest_design(
+                                result, api_key_v7,
+                                base_url=_current_base_url(),
+                                model=_current_model())
+                    except (RuntimeError, ValueError) as e:
+                        st.warning(f"Could not suggest a design: {e}")
+            design = st.session_state.get("v7_design")
+            if design:
+                st.success(f"AI suggestion: **{design['y']}** ~ "
+                           f"{' + '.join(design['x'])}")
+                st.caption(f"Why this Y: {design['why_y']}")
+                st.caption(f"Why these X's: {design['why_x']}")
+            num_cols_v7 = result["numeric_cols"]
+            if len(num_cols_v7) < 2:
+                st.info("One-click needs at least 2 numeric columns.")
+            else:
+                y_idx = (num_cols_v7.index(design["y"])
+                         if design and design["y"] in num_cols_v7 else 0)
+                y_v7 = st.selectbox("Y — the variable to explain",
+                                    num_cols_v7, index=y_idx, key="v7_y")
+                x_default = [c for c in (design["x"] if design else [])
+                             if c in num_cols_v7 and c != y_v7]
+                x_v7 = st.multiselect(
+                    "X's — the explanatory variables",
+                    [c for c in num_cols_v7 if c != y_v7],
+                    default=x_default, key="v7_x", on_change="ignore")
+                if st.button("🚀 Generate full report", key="v7_go"):
+                    with st.spinner("Cleaning → stats → charts → regression → "
+                                    "report…"):
+                        try:
+                            st.session_state["v7_bundle"] = \
+                                v7_assistant.run_everything(
+                                    result=result, y_col=y_v7, x_cols=x_v7,
+                                    name=name)
+                            st.session_state.pop("v7_interpretation", None)
+                        except (ValueError, RuntimeError) as e:
+                            st.error(str(e))
+                bundle = st.session_state.get("v7_bundle")
+                if bundle:
+                    if bundle["guards"]:
+                        with st.expander("⚠️ Automatic checks", expanded=True):
+                            for g in bundle["guards"]:
+                                st.warning(g)
+                    else:
+                        st.success("✅ Automatic checks passed — "
+                                   "no issues flagged.")
+                    st.markdown(bundle["report"])
+                    st.download_button(
+                        "⬇️ Download FULL_REPORT.md",
+                        bundle["report"].encode("utf-8"),
+                        file_name=f"FULL_REPORT_{Path(name).stem}.md",
+                        mime="text/markdown", on_click="ignore",
+                    )
+                    if st.button("✨ Write AI interpretation", key="v7_write"):
+                        if not api_key_v7:
+                            st.warning("AI is not configured yet. Contact the app owner to enable it.")
+                        else:
+                            messages = [
+                                {"role": "system",
+                                 "content": ai_chat.SYSTEM_PROMPT
+                                 + "\n\nFULL RESULTS:\n" + bundle["report"]},
+                                {"role": "user",
+                                 "content":
+                                 v7_assistant.FULL_INTERPRET_TASK},
+                            ]
+                            messages = ai_chat.trim_messages(messages)
+                            with st.spinner("The AI is writing the "
+                                            "interpretation…"):
+                                try:
+                                    st.session_state["v7_interpretation"] = \
+                                        ai_chat.chat_reply(
+                                            api_key_v7, messages,
+                                            base_url=_current_base_url(),
+                                            model=_current_model())
+                                except RuntimeError as e:
+                                    st.warning(f"⚠️ {e}")
+                    if st.session_state.get("v7_interpretation"):
+                        with st.expander("✨ AI interpretation", expanded=True):
+                            st.markdown(
+                                st.session_state["v7_interpretation"])
+
+    with tab_download:
+        if tab_download.open:
+            st.subheader("Take your results with you")
+            st.download_button(
+                "⬇️ Download cleaned CSV",
+                df.to_csv(index=False).encode("utf-8"),
+                file_name=f"cleaned_{Path(name).stem}.csv",
+                mime="text/csv", on_click="ignore",
+            )
+            st.download_button(
+                "⬇️ Download report (Markdown)",
+                result["report"].encode("utf-8"),
+                file_name=f"report_{Path(name).stem}.md",
+                mime="text/markdown", on_click="ignore",
+            )
+            st.caption("The full file bundle (charts as PNGs included) is "
+                       "available from the command-line version: "
+                       "`python src/v1_clean_analyze.py data/input/yourfile.csv`")
+
+
+
+    for section, tab in zip(CHAT_SECTIONS, (
+            tab_overview, tab_stats, tab_charts, tab_reg, tab_v7, tab_download)):
+        if tab.open:
+            _chat_ui(section, result, name, reg=st.session_state.get("regression"))
+            break
+
+
 def main():
     st.set_page_config(page_title="Auto-Research Assistant",
                        page_icon=":material/query_stats:", layout="wide")
+    st.html(Path(__file__).with_name("motion.css"))
     # Discard credentials/configuration left by older browser sessions.
     for legacy_key in ("ai_key", "ai_base", "ai_model_select", "ai_model_text",
                        "ai_models", "ai_models_cache_key"):
@@ -391,14 +669,14 @@ def main():
                          expanded=True):
             st.caption("Applied when you analyze a dataset.")
             opt_dupes = st.checkbox(
-                "Remove duplicate rows", value=True, key="clean_dupes",
+                "Remove duplicate rows", value=True, key="clean_dupes", on_change="ignore",
                 help="Drop rows that are exact copies of another row.")
             opt_numeric = st.checkbox(
-                "Convert numeric text", value=True, key="clean_numeric",
+                "Convert numeric text", value=True, key="clean_numeric", on_change="ignore",
                 help="Convert numeric-looking text into numbers, including existing 0/1 dummies. "
                      "This does not encode categories. Use Review variable types to mark numeric category codes.")
             opt_missing = st.checkbox(
-                "Standardize missing values", value=True, key="clean_missing",
+                "Standardize missing values", value=True, key="clean_missing", on_change="ignore",
                 help="Treat NA, N/A, -, ? and similar markers as missing values.")
         clean_opts = {"drop_dupes": opt_dupes,
                       "convert_numerics": opt_numeric,
@@ -499,247 +777,7 @@ def main():
     c3.metric("Numeric columns", len(result["numeric_cols"]), border=True)
     c4.metric("Categorical columns", len(result["cat_cols"]), border=True)
 
-    with st.container(border=True, key="results_navigation"):
-        st.subheader("Explore your results", anchor=False)
-        st.caption("Select a tab below to switch sections. "
-                   "Scroll the tab bar sideways if more tabs are off-screen.")
-        tab_overview, tab_stats, tab_charts, tab_reg, tab_v7, tab_download = st.tabs(
-            [":material/table_chart: **Overview**",
-             ":material/functions: **Statistics**",
-             ":material/bar_chart: **Charts**",
-             ":material/query_stats: **Regression**",
-             ":material/description: **Research report**",
-             ":material/download: **Downloads**"],
-            key="results_tabs", on_change="rerun")
-
-    with tab_overview:
-        applied_opts = _applied_cleaning_options(result)
-        skipped = [label for key, label in (
-            ("drop_dupes", "duplicate removal"),
-            ("convert_numerics", "numeric text conversion"),
-            ("fix_missing_tokens", "missing-value standardization"),
-        ) if not applied_opts[key]]
-        st.subheader("Data preview" if skipped else "Cleaned data", anchor=False)
-        if skipped:
-            st.warning(
-                "Skipped " + ", ".join(skipped) + ". "
-                "Basic preparation still runs: column names are tidied, empty rows "
-                "and columns are removed, and text whitespace is trimmed. "
-                "Enable the options in Cleaning settings and analyze the dataset "
-                "again to apply them.",
-                title="Cleaning options were off" if len(skipped) == 3
-                      else "Some cleaning steps were skipped",
-                icon=":material/warning:")
-        st.caption("Preview of the first 50 rows. Download the full dataset from Downloads.")
-        st.dataframe(df.head(50), width="stretch", hide_index=True)
-        with st.expander("Cleaning log", icon=":material/checklist:"):
-            for line in result["clean_lines"]:
-                st.write("• " + line)
-        _explain_section("Explain cleaning", "cleaning", result, name)
-
-    with tab_stats:
-        st.subheader("Missing values")
-        st.dataframe(result["missing"], width="stretch")
-        st.subheader("Numeric summary")
-        if not result["desc"].empty:
-            st.dataframe(result["desc"].round(3), width="stretch")
-        else:
-            st.write("No numeric columns in this dataset.")
-        if not result["top_cats"].empty:
-            st.subheader("Top categories")
-            st.dataframe(result["top_cats"], width="stretch")
-        _explain_section("✨ Interpret the statistics with AI", "statistics",
-                         result, name)
-
-    with tab_charts:
-        if result["figs"]:
-            for title, fig in result["figs"]:
-                st.subheader(title)
-                st.pyplot(fig, width="stretch")
-        else:
-            st.write("No charts could be drawn for this dataset.")
-        _explain_section("✨ Interpret the charts with AI", "charts",
-                         result, name)
-
-    with tab_reg:
-        st.subheader("OLS regression")
-        num_cols = result["numeric_cols"]
-        if len(num_cols) < 2:
-            st.info("Regression needs at least 2 numeric columns.")
-        else:
-            c1, c2 = st.columns(2)
-            y_col = c1.selectbox("Y — the variable to explain",
-                                 num_cols, key="reg_y")
-            x_cols = c2.multiselect("X's — the explanatory variables",
-                                    [c for c in num_cols if c != y_col],
-                                    key="reg_x")
-            if st.button("▶ Run regression", key="reg_run"):
-                try:
-                    reg = core.run_regression(df, y_col, x_cols)
-                    st.session_state["regression"] = reg
-                    st.session_state.pop("explanation_regression", None)
-                    st.session_state.get("chat_histories", {}).pop(
-                        "regression", None)
-                except (ValueError, RuntimeError) as e:
-                    st.error(str(e))
-            reg = st.session_state.get("regression")
-            if reg:
-                st.latex(_regression_equation(reg))
-                st.caption(f"OLS model · {reg['n_obs']:,} complete observations")
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("R²", f"{reg['r2']:.3f}")
-                m2.metric("Adj. R²", f"{reg['adj_r2']:.3f}")
-                m3.metric("F-statistic", f"{reg['f_stat']:.1f}")
-                m4.metric("F p-value", f"{reg['f_pvalue']:.4g}")
-                st.subheader("Coefficients")
-                st.dataframe(reg["coef"].round(4), width="stretch")
-                st.subheader("VIF — multicollinearity check")
-                vif = reg["vif"].round(3)
-                st.dataframe(vif, width="stretch")
-                if (vif["VIF"] > 10).any():
-                    st.warning("VIF above 10 — strong multicollinearity in "
-                               "those variables. Consider dropping one.")
-                elif (vif["VIF"] > 5).any():
-                    st.warning("VIF above 5 — moderate multicollinearity. "
-                               "Worth a look.")
-                else:
-                    st.success("All VIFs look fine (≤ 5).")
-                st.subheader("Diagnostics")
-                d = reg["diagnostics"]
-                st.write(f"• Breusch-Pagan p = {d['breusch_pagan_p']:.4g} — "
-                         f"{'possible heteroskedasticity'
-                            if d['breusch_pagan_p'] < 0.05
-                            else 'no sign of heteroskedasticity'}")
-                st.write(f"• Jarque-Bera p = {d['jarque_bera_p']:.4g} — "
-                         f"{'residuals look non-normal'
-                            if d['jarque_bera_p'] < 0.05
-                            else 'residuals look normal'}")
-                for title, fig in reg["figs"]:
-                    st.subheader(title)
-                    st.pyplot(fig, width="stretch")
-                    plt.close(fig)
-                _explain_section("✨ Interpret the regression with AI",
-                                 "regression", result, name, reg=reg)
-
-    with tab_v7:
-        st.subheader("One-click research assistant")
-        st.write("From your cleaned dataset to a full research report. "
-                 "The AI can suggest the research design — you confirm it, "
-                 "then one click runs everything.")
-        api_key_v7 = _current_api_key()
-        if "v7_design" not in st.session_state:
-            st.session_state["v7_design"] = None
-        if api_key_v7 and st.button("🤖 Suggest research design",
-                                   key="v7_suggest"):
-            with st.spinner("The AI is studying your columns…"):
-                try:
-                    st.session_state["v7_design"] = \
-                        v7_assistant.suggest_design(
-                            result, api_key_v7,
-                            base_url=_current_base_url(),
-                            model=_current_model())
-                except (RuntimeError, ValueError) as e:
-                    st.warning(f"Could not suggest a design: {e}")
-        design = st.session_state.get("v7_design")
-        if design:
-            st.success(f"AI suggestion: **{design['y']}** ~ "
-                       f"{' + '.join(design['x'])}")
-            st.caption(f"Why this Y: {design['why_y']}")
-            st.caption(f"Why these X's: {design['why_x']}")
-        num_cols_v7 = result["numeric_cols"]
-        if len(num_cols_v7) < 2:
-            st.info("One-click needs at least 2 numeric columns.")
-        else:
-            y_idx = (num_cols_v7.index(design["y"])
-                     if design and design["y"] in num_cols_v7 else 0)
-            y_v7 = st.selectbox("Y — the variable to explain",
-                                num_cols_v7, index=y_idx, key="v7_y")
-            x_default = [c for c in (design["x"] if design else [])
-                         if c in num_cols_v7 and c != y_v7]
-            x_v7 = st.multiselect(
-                "X's — the explanatory variables",
-                [c for c in num_cols_v7 if c != y_v7],
-                default=x_default, key="v7_x")
-            if st.button("🚀 Generate full report", key="v7_go"):
-                with st.spinner("Cleaning → stats → charts → regression → "
-                                "report…"):
-                    try:
-                        st.session_state["v7_bundle"] = \
-                            v7_assistant.run_everything(
-                                result=result, y_col=y_v7, x_cols=x_v7,
-                                name=name)
-                        st.session_state.pop("v7_interpretation", None)
-                    except (ValueError, RuntimeError) as e:
-                        st.error(str(e))
-            bundle = st.session_state.get("v7_bundle")
-            if bundle:
-                if bundle["guards"]:
-                    with st.expander("⚠️ Automatic checks", expanded=True):
-                        for g in bundle["guards"]:
-                            st.warning(g)
-                else:
-                    st.success("✅ Automatic checks passed — "
-                               "no issues flagged.")
-                st.markdown(bundle["report"])
-                st.download_button(
-                    "⬇️ Download FULL_REPORT.md",
-                    bundle["report"].encode("utf-8"),
-                    file_name=f"FULL_REPORT_{Path(name).stem}.md",
-                    mime="text/markdown",
-                )
-                if st.button("✨ Write AI interpretation", key="v7_write"):
-                    if not api_key_v7:
-                        st.warning("AI is not configured yet. Contact the app owner to enable it.")
-                    else:
-                        messages = [
-                            {"role": "system",
-                             "content": ai_chat.SYSTEM_PROMPT
-                             + "\n\nFULL RESULTS:\n" + bundle["report"]},
-                            {"role": "user",
-                             "content":
-                             v7_assistant.FULL_INTERPRET_TASK},
-                        ]
-                        messages = ai_chat.trim_messages(messages)
-                        with st.spinner("The AI is writing the "
-                                        "interpretation…"):
-                            try:
-                                st.session_state["v7_interpretation"] = \
-                                    ai_chat.chat_reply(
-                                        api_key_v7, messages,
-                                        base_url=_current_base_url(),
-                                        model=_current_model())
-                            except RuntimeError as e:
-                                st.warning(f"⚠️ {e}")
-                if st.session_state.get("v7_interpretation"):
-                    with st.expander("✨ AI interpretation", expanded=True):
-                        st.markdown(
-                            st.session_state["v7_interpretation"])
-
-    with tab_download:
-        st.subheader("Take your results with you")
-        st.download_button(
-            "⬇️ Download cleaned CSV",
-            df.to_csv(index=False).encode("utf-8"),
-            file_name=f"cleaned_{Path(name).stem}.csv",
-            mime="text/csv",
-        )
-        st.download_button(
-            "⬇️ Download report (Markdown)",
-            result["report"].encode("utf-8"),
-            file_name=f"report_{Path(name).stem}.md",
-            mime="text/markdown",
-        )
-        st.caption("The full file bundle (charts as PNGs included) is "
-                   "available from the command-line version: "
-                   "`python src/v1_clean_analyze.py data/input/yourfile.csv`")
-
-
-
-    for section, tab in zip(CHAT_SECTIONS, (
-            tab_overview, tab_stats, tab_charts, tab_reg, tab_v7, tab_download)):
-        if tab.open:
-            _chat_ui(section, result, name, reg=st.session_state.get("regression"))
-            break
+    _results_ui(result, name)
 
 
 if __name__ == "__main__":

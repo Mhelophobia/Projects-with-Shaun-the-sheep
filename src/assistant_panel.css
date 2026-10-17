@@ -35,6 +35,14 @@
 .st-key-assistant_header button { padding: 6px; min-width: 32px; }
 .st-key-assistant_header button p { font-size: 0; }
 .st-key-assistant_header button [data-testid="stIconMaterial"] { font-size: 22px; }
+.st-key-assistant_welcome h2 {
+  font-size: clamp(1.9rem, 4vw, 2.25rem);
+  line-height: 1.18;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  padding-bottom: 8px;
+}
+.st-key-assistant_welcome h3 { font-size: 1.4rem; padding-top: 0; }
 [class*="st-key-assistant_messages_"] button { text-align: left; min-height: 62px; border-color: #b6c9ef; }
 [class*="st-key-assistant_messages_"] button p { text-align: left; }
 [class*="st-key-assistant_messages_"] [data-testid="stChatMessage"] { padding: 12px 8px; }

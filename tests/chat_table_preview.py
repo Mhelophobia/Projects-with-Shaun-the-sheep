@@ -26,7 +26,8 @@ st.session_state["preview_runs"] = st.session_state.get("preview_runs", 0) + 1
 st.caption(f"Page render count: {st.session_state['preview_runs']}")
 st.session_state.setdefault("chat_histories", {"cleaning": [
     {"role": "assistant", "content": REPLY}]})
-st.session_state.setdefault("assistant_panel_cleaning", True)
+if st.button("AI assistant"):
+    st.session_state["assistant_open"] = True
 with (patch("app._current_api_key", return_value="preview"),
       patch("app._chat_system", return_value="Example table preview"),
       patch("app.ai_chat.chat_reply", return_value=REPLY)):

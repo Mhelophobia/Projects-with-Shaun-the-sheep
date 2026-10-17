@@ -66,6 +66,8 @@ CHAT_SUGGESTIONS = {
         "Which predictors are significant, and what do they mean?",
         "Is multicollinearity or heteroskedasticity a concern here?",
     ],
+    "report": ["Help me plan my research report.", "Summarize the findings for my report."],
+    "downloads": ["Which file should I download?", "What is included in my report?"],
 }
 
 CHAT_SECTIONS = {
@@ -132,40 +134,62 @@ def _send_chat_message(prompt, section, result, name, reg=None):
     hist.append({"role": "assistant", "content": reply})
 
 
+def _set_assistant_open(opened):
+    st.session_state["assistant_open"] = opened
+
+
+def _new_section_chat(section):
+    st.session_state.setdefault("chat_histories", {})[section] = []
+    st.session_state.pop(f"chat_{section}", None)
+    generations = st.session_state.setdefault("chat_generations", {})
+    generations[section] = generations.get(section, 0) + 1
+
+
 def _chat_ui(section, result, name, reg=None):
-    """One floating chat for the active tab, with strictly section-scoped history."""
+    """A docked right-hand assistant with a separate conversation for each tab."""
+    if not st.session_state.setdefault("assistant_open", True):
+        return
     label = CHAT_SECTIONS[section]
-    with st.bottom:
-        with st.container(horizontal=True, horizontal_alignment="right"):
-            panel = st.popover(f"Ask about {label}", icon=":material/chat:",
-                               type="primary", key=f"assistant_panel_{section}",
-                               on_change="rerun")
-    with panel, st.container(width=420):
-        st.subheader(f"{label} assistant", anchor=False)
-        st.caption("Separate history for each tab. Your chats stay in their own section.")
+    # Streamlit has one native left sidebar; scope the right-dock layout to our own keys.
+    st.html(Path(__file__).with_name("assistant_panel.css"))
+    with st.container(key="research_chat_panel"):
+        with st.container(horizontal=True, vertical_alignment="center", key="assistant_header"):
+            st.markdown(":blue[:material/auto_awesome:] **Research assistant**")
+            st.space("stretch")
+            st.button("New chat", icon=":material/add_comment:", type="tertiary",
+                      key=f"new_chat_{section}", help=f"Start a new {label.lower()} conversation",
+                      on_click=_new_section_chat, args=(section,))
+            st.button("Close assistant", icon=":material/close:", type="tertiary",
+                      key="close_assistant", on_click=_set_assistant_open, args=(False,))
+        st.caption(f"{label} · Separate conversation for this section")
         api_key = _current_api_key()
-        if not api_key:
-            st.info("AI is not configured yet. Contact the app owner to enable chat.")
-            return
-        if "chat_histories" not in st.session_state:
-            st.session_state["chat_histories"] = {}
         history = _section_history(section)
-        conversation = st.container(height=180)
+        generation = st.session_state.get("chat_generations", {}).get(section, 0)
+        conversation = st.container(key=f"assistant_messages_{section}_{generation}",
+                                    height=400, border=False, autoscroll=bool(history))
         with conversation:
             for message_index, msg in enumerate(history):
                 with st.chat_message(msg["role"]):
                     render_message(msg["content"], key=f"{section}_history_{message_index}")
             if not history:
-                st.markdown(f"What would you like to understand about **{label.lower()}**?")
-                for q in CHAT_SUGGESTIONS.get(section, []):
-                    if st.button(q, key=f"sugg_{section}_{q[:20]}", width="stretch"):
+                st.markdown("### :blue[Hi there.]\n## How can I help?")
+                st.caption(f"Let's take a closer look at your {label.lower()} results.")
+                st.space("small")
+                questions = CHAT_SUGGESTIONS.get(section, []) + ["Explain this section in simple terms."]
+                for q in questions:
+                    if st.button(q, key=f"sugg_{section}_{q[:20]}", width="stretch",
+                                 icon=":material/auto_awesome:", disabled=not api_key):
                         _send_chat_message(q, section, result, name, reg=reg)
                         st.rerun()
+            if not api_key:
+                st.info("AI is not configured yet. Contact the app owner to enable chat.")
         if prompt := st.chat_input(f"Ask about {label.lower()}…",
-                                   key=f"chat_{section}", submit_mode="disable"):
+                                   key=f"chat_{section}", submit_mode="disable",
+                                   disabled=not api_key):
             with conversation:
                 _send_chat_message(prompt, section, result, name, reg=reg)
             st.rerun()
+        st.caption("AI can make mistakes. Check important findings against your data.")
 
 
 def _explain_section(label, section, result, name, reg=None):
@@ -413,6 +437,9 @@ def main():
         st.caption("YOUR RESEARCH WORKSPACE")
         st.title("Make sense of your data")
         st.write("Explore the findings, check the details, and build your report.")
+        with st.container(horizontal=True, horizontal_alignment="right"):
+            st.button("AI assistant", icon=":material/auto_awesome:", key="open_assistant",
+                      on_click=_set_assistant_open, args=(True,))
 
     upload_area = (st.expander("Analyze another dataset", icon=":material/upload_file:")
                    if result is not None else st.container(border=True))

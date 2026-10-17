@@ -1,0 +1,48 @@
+/* Dock only the assistant; native widgets keep their built-in keyboard behavior. */
+.st-key-research_chat_panel {
+  position: fixed;
+  top: 3.5rem;
+  right: 0;
+  bottom: 0;
+  width: min(440px, 100vw);
+  height: calc(100dvh - 3.5rem);
+  z-index: 100;
+  box-sizing: border-box;
+  padding: 20px 22px 16px;
+  background: #fcfdff;
+  border-left: 1px solid #dfe6ef;
+  border-top: 1px solid #dfe6ef;
+  border-radius: 20px 0 0 0;
+  box-shadow: -8px 0 28px #1426400a;
+  overflow: hidden;
+  gap: 12px;
+}
+.st-key-research_chat_panel > div { flex-shrink: 0; }
+.st-key-research_chat_panel > [data-testid="stLayoutWrapper"]:has(> [class*="st-key-assistant_messages_"]) {
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+.st-key-research_chat_panel [class*="st-key-assistant_messages_"] {
+  min-height: 0 !important;
+  height: 100% !important;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 3px;
+  overscroll-behavior: contain;
+}
+.st-key-assistant_header { gap: 4px; flex-wrap: nowrap; }
+.st-key-assistant_header button { padding: 6px; min-width: 32px; }
+.st-key-assistant_header button p { font-size: 0; }
+.st-key-assistant_header button [data-testid="stIconMaterial"] { font-size: 22px; }
+[class*="st-key-assistant_messages_"] button { text-align: left; min-height: 62px; border-color: #b6c9ef; }
+[class*="st-key-assistant_messages_"] button p { text-align: left; }
+[class*="st-key-assistant_messages_"] [data-testid="stChatMessage"] { padding: 12px 8px; }
+@media (min-width: 1100px) {
+  [data-testid="stMain"]:has(.st-key-research_chat_panel) .block-container {
+    padding-right: 476px;
+  }
+}
+@media (max-width: 600px) {
+  .st-key-research_chat_panel { width: 100vw; border-radius: 0; padding: 16px; }
+}

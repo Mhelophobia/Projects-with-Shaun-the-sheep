@@ -150,7 +150,7 @@ class FeedbackTests(unittest.TestCase):
                           self.app.session_state["chat_histories"]["cleaning"][-1]["content"])
             self.assertFalse(loading)
 
-    def test_floating_chat_follows_tabs_without_sharing_messages(self):
+    def test_sidebar_chat_follows_tabs_without_sharing_messages(self):
         self.server_secrets["GROQ_API_KEY"] = "test-key"
         self.app.button(key="try_sample").click().run()
         with patch.object(ai_chat, "chat_reply", return_value="Overview answer") as request:
@@ -180,6 +180,26 @@ class FeedbackTests(unittest.TestCase):
         self.app.button(key="try_sample").click().run()
         self.assertFalse(self.app.session_state["chat_histories"].get("statistics"))
         self.assertFalse(self.app.session_state["chat_histories"].get("regression"))
+
+    def test_sidebar_close_reopen_and_new_chat_keep_other_sections(self):
+        self.server_secrets["GROQ_API_KEY"] = "test-key"
+        self.app.button(key="try_sample").click().run()
+        self.app.session_state["chat_histories"] = {
+            "cleaning": [{"role": "assistant", "content": "Overview reply"}],
+            "statistics": [{"role": "assistant", "content": "Statistics reply"}],
+        }
+        self.app.run()
+        self.app.button(key="close_assistant").click().run()
+        self.assertFalse(self.app.exception)
+        self.assertFalse(self.app.chat_input)
+        self.app.button(key="open_assistant").click().run()
+        self.assertTrue(self.app.session_state["assistant_open"])
+        self.assertTrue(any(m.value == "Overview reply" for m in self.app.markdown))
+        self.app.button(key="new_chat_cleaning").click().run()
+        self.assertFalse(self.app.exception)
+        self.assertEqual(self.app.session_state["chat_histories"]["cleaning"], [])
+        self.assertEqual(self.app.session_state["chat_histories"]["statistics"][0]["content"],
+                         "Statistics reply")
 
 if __name__ == "__main__":
     unittest.main()

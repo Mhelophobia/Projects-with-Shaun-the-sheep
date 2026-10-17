@@ -23,9 +23,11 @@ import core
 import ai_chat
 import v7_assistant
 import variable_types
+from chat_rendering import render_message
 
 SAMPLE = Path(__file__).resolve().parent.parent / "data" / "input" / \
     "sample_survey.csv"
+HERO_IMAGE = Path(__file__).resolve().parent.parent / "assets" / "research-discovery-v1.png"
 
 def _server_setting(name, default=""):
     """Read owner-managed configuration without putting it in browser widgets."""
@@ -66,13 +68,33 @@ CHAT_SUGGESTIONS = {
     ],
 }
 
+CHAT_SECTIONS = {
+    "cleaning": "Overview",
+    "statistics": "Statistics",
+    "charts": "Charts",
+    "regression": "Regression",
+    "report": "Research report",
+    "downloads": "Downloads",
+}
+
 
 def _chat_system(section, result, name, reg=None):
+    if section == "report":
+        bundle = st.session_state.get("v7_bundle")
+        brief = (bundle["report"] if bundle else
+                 "No research report has been built yet. Help the user choose an outcome and predictors.")
+    elif section == "downloads":
+        brief = (f"Dataset: {name}. Downloads offers a cleaned CSV and the analysis report in Markdown. "
+                 "The Research report tab offers the full report after it is built.")
+    elif section == "regression" and reg is None:
+        brief = "No regression has been run yet. Help the user select an outcome and predictors; do not invent fitted results."
+    else:
+        brief = ai_chat.build_section_brief(result, name, section, reg=reg)
     return (ai_chat.SYSTEM_PROMPT
             + f"\n\nThe user is currently viewing the {section.upper()} "
               f"section of the results."
             + "\n\nSECTION BRIEF:\n"
-            + ai_chat.build_section_brief(result, name, section, reg=reg)
+            + brief
             + "\n\n"
             + ai_chat.build_column_overview(result))
 
@@ -106,32 +128,43 @@ def _send_chat_message(prompt, section, result, name, reg=None):
                     model=_current_model())
             except RuntimeError as e:
                 reply = f"⚠️ {e}"
-        st.markdown(reply)
+        render_message(reply, key=f"{section}_reply_{len(hist)}")
     hist.append({"role": "assistant", "content": reply})
 
 
 def _chat_ui(section, result, name, reg=None):
-    """Chat box integrated at the bottom of a results tab."""
-    with st.expander("Chat about this section", icon=":material/chat:"):
+    """One floating chat for the active tab, with strictly section-scoped history."""
+    label = CHAT_SECTIONS[section]
+    with st.bottom:
+        with st.container(horizontal=True, horizontal_alignment="right"):
+            panel = st.popover(f"Ask about {label}", icon=":material/chat:",
+                               type="primary", key=f"assistant_panel_{section}",
+                               on_change="rerun")
+    with panel, st.container(width=420):
+        st.subheader(f"{label} assistant", anchor=False)
+        st.caption("Separate history for each tab. Your chats stay in their own section.")
         api_key = _current_api_key()
         if not api_key:
             st.info("AI is not configured yet. Contact the app owner to enable chat.")
             return
         if "chat_histories" not in st.session_state:
             st.session_state["chat_histories"] = {}
-        for msg in _section_history(section):
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-        sugg = CHAT_SUGGESTIONS.get(section, [])
-        if sugg:
-            cols = st.columns(len(sugg))
-            for col, q in zip(cols, sugg):
-                if col.button(q, key=f"sugg_{section}_{q[:20]}"):
-                    _send_chat_message(q, section, result, name, reg=reg)
-                    st.rerun()
-        if prompt := st.chat_input("Ask about these results…",
+        history = _section_history(section)
+        conversation = st.container(height=180)
+        with conversation:
+            for message_index, msg in enumerate(history):
+                with st.chat_message(msg["role"]):
+                    render_message(msg["content"], key=f"{section}_history_{message_index}")
+            if not history:
+                st.markdown(f"What would you like to understand about **{label.lower()}**?")
+                for q in CHAT_SUGGESTIONS.get(section, []):
+                    if st.button(q, key=f"sugg_{section}_{q[:20]}", width="stretch"):
+                        _send_chat_message(q, section, result, name, reg=reg)
+                        st.rerun()
+        if prompt := st.chat_input(f"Ask about {label.lower()}…",
                                    key=f"chat_{section}", submit_mode="disable"):
-            _send_chat_message(prompt, section, result, name, reg=reg)
+            with conversation:
+                _send_chat_message(prompt, section, result, name, reg=reg)
             st.rerun()
 
 
@@ -192,12 +225,12 @@ def _clear_analysis(reset_variables=True):
     for key in ("result", "name", "regression", "chat_histories", "chat_history",
                 "v7_design", "v7_bundle", "v7_interpretation",
                 "reg_y", "reg_x", "v7_y", "v7_x", "dataset_sheet",
-                "results_tabs"):
+                "results_tabs", "expanded_table_chat_panel"):
         st.session_state.pop(key, None)
     for key in list(st.session_state):
         if reset_variables and key.startswith("variable_"):
             st.session_state.pop(key, None)
-    for section in ("cleaning", "statistics", "charts", "regression"):
+    for section in CHAT_SECTIONS:
         st.session_state.pop(f"explanation_{section}", None)
         st.session_state.pop(f"chat_{section}", None)
 
@@ -326,7 +359,9 @@ def main():
 
     with st.sidebar:
         st.subheader(":material/query_stats: Auto-Research")
-        st.caption("Your research workspace")
+        st.caption("A little clarity for your next discovery.")
+        st.badge("Research workspace", icon=":material/science:", color="blue")
+        st.space("medium")
         with st.expander("Cleaning settings", icon=":material/tune:",
                          expanded=True):
             st.caption("Applied when you analyze a dataset.")
@@ -344,8 +379,10 @@ def main():
                       "convert_numerics": opt_numeric,
                       "fix_missing_tokens": opt_missing}
 
-        st.caption("Your personal AI assistant is ready to help." if _current_api_key()
-                   else "AI is not configured. Contact the app owner to enable it.")
+        with st.container(border=True):
+            st.markdown(":material/auto_awesome: **Research companion**")
+            st.caption("Ask questions and get help interpreting your results." if _current_api_key()
+                       else "Cleaning, statistics, and exports are ready. AI explanations become available when the app owner enables them.")
 
         recents = st.session_state.get("recent_uploads", [])
         if recents:
@@ -357,18 +394,31 @@ def main():
                         bio = io.BytesIO(r["data"])
                         bio.name = r["name"]
                         _start_analysis(bio, r["name"], clean_opts=clean_opts)
-        st.caption("Powered by Groq")
+        st.space("medium")
+        st.caption("Built for curious minds.\n\nProject by Mhel Garret L. Suerte")
 
     result = st.session_state.get("result")
-    st.caption("WORKSPACE / RESEARCH")
-    st.title("Meet your data before you marry your model.")
-    st.write("Upload your dataset and see in one click whether it's clean, sound, and regression-ready — before you invest weeks in analysis.")
+    if result is None:
+        intro, artwork = st.columns([1.1, 1], gap="large", vertical_alignment="center")
+        with intro:
+            st.badge("Your next insight starts here", icon=":material/auto_awesome:", color="blue")
+            st.title("Meet your data before you :blue[marry your model.]")
+            st.markdown("Bring your dataset. Find the patterns. Build a clearer research story — all in one workspace.")
+            st.caption("CSV, TXT & Excel  ·  Cleaning, analysis & reports")
+        with artwork:
+            st.image(str(HERO_IMAGE), width="stretch",
+                     alt="Paper research charts connected to blue glass columns by a flowing ribbon.")
+        st.space("small")
+    else:
+        st.caption("YOUR RESEARCH WORKSPACE")
+        st.title("Make sense of your data")
+        st.write("Explore the findings, check the details, and build your report.")
 
     upload_area = (st.expander("Analyze another dataset", icon=":material/upload_file:")
                    if result is not None else st.container(border=True))
     with upload_area:
-        st.subheader("Start with your dataset", anchor=False)
-        st.caption("Upload a CSV or Excel file, or explore the sample survey.")
+        st.subheader("Start with your dataset", anchor=False, icon=":material/upload_file:")
+        st.caption("Drop in your data to begin. Just exploring? Try the sample survey below.")
         uploaded = st.file_uploader(
             "Choose a data file", type=["csv", "txt", "xlsx", "xls"],
             key="dataset_upload", label_visibility="collapsed",
@@ -390,20 +440,22 @@ def main():
             if st.button("Try sample dataset", key="try_sample",
                          icon=":material/science:"):
                 _start_analysis(SAMPLE, SAMPLE.name, clean_opts=clean_opts)
-        st.caption("1. Add data   /   2. Explore results   /   3. Build your report")
+        st.caption(":material/tune: Cleaning settings are in the sidebar. Your uploaded source file is never overwritten.")
 
     if result is None:
-        st.subheader("Everything you need to get started", anchor=False)
+        st.space("small")
+        st.subheader("A clear path from data to findings", anchor=False)
         features = [
-            ("cleaning_services", "Clean & prepare",
+            ("01", "cleaning_services", "Prepare with confidence",
              "Tidy columns, remove duplicates, and standardize missing values."),
-            ("query_stats", "Explore & understand",
+            ("02", "query_stats", "Find the useful patterns",
              "Summary statistics, charts, correlations, and regression diagnostics."),
-            ("description", "Report & export",
+            ("03", "description", "Bring your findings together",
              "Build a research report and download your cleaned data and findings."),
         ]
-        for col, (icon, title, description) in zip(st.columns(3), features):
+        for col, (step, icon, title, description) in zip(st.columns(3), features):
             with col.container(border=True, height="stretch"):
+                st.caption(f"STEP {step}")
                 st.markdown(f":blue[:material/{icon}:] **{title}**")
                 st.caption(description)
         return
@@ -430,7 +482,7 @@ def main():
              ":material/query_stats: **Regression**",
              ":material/description: **Research report**",
              ":material/download: **Downloads**"],
-            key="results_tabs")
+            key="results_tabs", on_change="rerun")
 
     with tab_overview:
         applied_opts = _applied_cleaning_options(result)
@@ -456,7 +508,6 @@ def main():
             for line in result["clean_lines"]:
                 st.write("• " + line)
         _explain_section("Explain cleaning", "cleaning", result, name)
-        _chat_ui("cleaning", result, name)
 
     with tab_stats:
         st.subheader("Missing values")
@@ -471,7 +522,6 @@ def main():
             st.dataframe(result["top_cats"], width="stretch")
         _explain_section("✨ Interpret the statistics with AI", "statistics",
                          result, name)
-        _chat_ui("statistics", result, name)
 
     with tab_charts:
         if result["figs"]:
@@ -482,7 +532,6 @@ def main():
             st.write("No charts could be drawn for this dataset.")
         _explain_section("✨ Interpret the charts with AI", "charts",
                          result, name)
-        _chat_ui("charts", result, name)
 
     with tab_reg:
         st.subheader("OLS regression")
@@ -543,7 +592,6 @@ def main():
                     plt.close(fig)
                 _explain_section("✨ Interpret the regression with AI",
                                  "regression", result, name, reg=reg)
-                _chat_ui("regression", result, name, reg=reg)
 
     with tab_v7:
         st.subheader("One-click research assistant")
@@ -657,7 +705,13 @@ def main():
                    "available from the command-line version: "
                    "`python src/v1_clean_analyze.py data/input/yourfile.csv`")
 
-    st.caption("Auto-Research Assistant · Built by Mhel & Shaun")
+
+
+    for section, tab in zip(CHAT_SECTIONS, (
+            tab_overview, tab_stats, tab_charts, tab_reg, tab_v7, tab_download)):
+        if tab.open:
+            _chat_ui(section, result, name, reg=st.session_state.get("regression"))
+            break
 
 
 if __name__ == "__main__":

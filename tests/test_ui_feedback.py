@@ -141,6 +141,7 @@ class FeedbackTests(unittest.TestCase):
                              "Test reply")
             self.assertFalse(loading)
 
+
         with patch("streamlit.spinner", observed_spinner), patch.object(
                 ai_chat, "chat_reply", side_effect=RuntimeError("Service unavailable")):
             self.app.chat_input(key="chat_cleaning").set_value("Try again").run()
@@ -149,6 +150,36 @@ class FeedbackTests(unittest.TestCase):
                           self.app.session_state["chat_histories"]["cleaning"][-1]["content"])
             self.assertFalse(loading)
 
+    def test_floating_chat_follows_tabs_without_sharing_messages(self):
+        self.server_secrets["GROQ_API_KEY"] = "test-key"
+        self.app.button(key="try_sample").click().run()
+        with patch.object(ai_chat, "chat_reply", return_value="Overview answer") as request:
+            self.app.chat_input(key="chat_cleaning").set_value("Overview-only question").run()
+            self.assertIn("CLEANING", request.call_args.args[1][0]["content"])
+        self.app.session_state["results_tabs"] = ":material/functions: **Statistics**"
+        self.app.run()
+        self.assertFalse(self.app.exception)
+        self.assertEqual([c.key for c in self.app.chat_input], ["chat_statistics"])
+        with patch.object(ai_chat, "chat_reply", return_value="Statistics answer") as request:
+            self.app.chat_input(key="chat_statistics").set_value("Statistics-only question").run()
+            messages = request.call_args.args[1]
+            self.assertIn("STATISTICS", messages[0]["content"])
+            self.assertNotIn("Overview-only question", str(messages))
+            self.assertNotIn("Overview answer", str(messages))
+        self.app.session_state["results_tabs"] = ":material/table_chart: **Overview**"
+        self.app.run()
+        self.assertEqual(self.app.session_state["chat_histories"]["cleaning"][0]["content"],
+                         "Overview-only question")
+        self.assertEqual(len(self.app.session_state["chat_histories"]["statistics"]), 2)
+        self.app.session_state["results_tabs"] = ":material/query_stats: **Regression**"
+        self.app.run()
+        with patch.object(ai_chat, "chat_reply", return_value="Choose an outcome") as request:
+            self.app.chat_input(key="chat_regression").set_value("How do I begin?").run()
+            self.assertIn("No regression has been run", request.call_args.args[1][0]["content"])
+        self.assertFalse(self.app.exception)
+        self.app.button(key="try_sample").click().run()
+        self.assertFalse(self.app.session_state["chat_histories"].get("statistics"))
+        self.assertFalse(self.app.session_state["chat_histories"].get("regression"))
 
 if __name__ == "__main__":
     unittest.main()

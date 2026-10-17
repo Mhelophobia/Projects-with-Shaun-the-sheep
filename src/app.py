@@ -147,7 +147,7 @@ def _new_section_chat(section):
 
 def _chat_ui(section, result, name, reg=None):
     """A docked right-hand assistant with a separate conversation for each tab."""
-    if not st.session_state.setdefault("assistant_open", True):
+    if not st.session_state.setdefault("assistant_open", False):
         return
     label = CHAT_SECTIONS[section]
     # Streamlit has one native left sidebar; scope the right-dock layout to our own keys.
@@ -241,6 +241,7 @@ def _remember_upload(source, name):
 
 def _clear_analysis(reset_variables=True):
     """Reset dataset-specific state before displaying a changed upload."""
+    st.session_state["assistant_open"] = False
     for key in ("result", "regression"):
         previous = st.session_state.get(key)
         if previous:

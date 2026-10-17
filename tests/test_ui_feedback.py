@@ -54,6 +54,7 @@ class FeedbackTests(unittest.TestCase):
         self.assertFalse(self.app.text_input)
         self.assertFalse(any(e.label == "AI setup" for e in self.app.expander))
         self.app.button(key="try_sample").click().run()
+        self.app.button(key="open_assistant").click().run()
         with patch.object(ai_chat, "chat_reply", return_value="Reply") as request:
             self.app.chat_input(key="chat_cleaning").set_value("Summarize").run()
             self.assertEqual(request.call_args.args[0], secret)
@@ -109,6 +110,7 @@ class FeedbackTests(unittest.TestCase):
 
     def test_chat_shows_loading_during_request_and_recovers_after_error(self):
         self.app.button(key="try_sample").click().run()
+        self.app.button(key="open_assistant").click().run()
         self.server_secrets["GROQ_API_KEY"] = "test-key"
         self.app.run()
         original_spinner = st.spinner
@@ -153,6 +155,7 @@ class FeedbackTests(unittest.TestCase):
     def test_sidebar_chat_follows_tabs_without_sharing_messages(self):
         self.server_secrets["GROQ_API_KEY"] = "test-key"
         self.app.button(key="try_sample").click().run()
+        self.app.button(key="open_assistant").click().run()
         with patch.object(ai_chat, "chat_reply", return_value="Overview answer") as request:
             self.app.chat_input(key="chat_cleaning").set_value("Overview-only question").run()
             self.assertIn("CLEANING", request.call_args.args[1][0]["content"])
@@ -184,6 +187,7 @@ class FeedbackTests(unittest.TestCase):
     def test_sidebar_close_reopen_and_new_chat_keep_other_sections(self):
         self.server_secrets["GROQ_API_KEY"] = "test-key"
         self.app.button(key="try_sample").click().run()
+        self.app.button(key="open_assistant").click().run()
         self.app.session_state["chat_histories"] = {
             "cleaning": [{"role": "assistant", "content": "Overview reply"}],
             "statistics": [{"role": "assistant", "content": "Statistics reply"}],
@@ -200,6 +204,21 @@ class FeedbackTests(unittest.TestCase):
         self.assertEqual(self.app.session_state["chat_histories"]["cleaning"], [])
         self.assertEqual(self.app.session_state["chat_histories"]["statistics"][0]["content"],
                          "Statistics reply")
+
+    def test_analysis_keeps_assistant_closed_until_opened(self):
+        data = b"x,y\n1,3\n2,5\n3,8\n4,9\n5,12\n6,13\n"
+        self.app.get("file_uploader")[0].upload("data.csv", data).run()
+        self.app.button(key="analyze_dataset").click().run()
+        self.assertFalse(self.app.exception)
+        self.assertFalse(self.app.session_state["assistant_open"])
+        self.assertFalse(self.app.chat_input)
+        self.app.button(key="open_assistant").click().run()
+        self.assertTrue(self.app.session_state["assistant_open"])
+        self.assertEqual(len(self.app.chat_input), 1)
+        self.app.button(key="analyze_dataset").click().run()
+        self.assertFalse(self.app.exception)
+        self.assertFalse(self.app.session_state["assistant_open"])
+        self.assertFalse(self.app.chat_input)
 
 if __name__ == "__main__":
     unittest.main()
